@@ -5,11 +5,11 @@ use std::ops::DerefMut;
 use std::str::Chars;
 use std::str::FromStr;
 
-use crate::error::ErrorKind;
 use crate::ParseError;
 use crate::ParseOptions;
 use crate::ParseResult;
 use crate::RawDateTime;
+use crate::error::ErrorKind;
 
 /// An object that parses one and exactly one date and time string, and is consumed.
 #[must_use]
@@ -74,7 +74,17 @@ impl<'a> OnceParser<'a> {
             'f' => match nano_digits.take() {
               Some(3) => answer.set_nanosecond(input.parse_int::<u64>(3, Some('0'))? * 1_000_000),
               Some(6) => answer.set_nanosecond(input.parse_int::<u64>(6, Some('0'))? * 1000),
-              _ => answer.set_nanosecond(input.parse_int::<u64>(9, Some('0'))?),
+              Some(9) => answer.set_nanosecond(input.parse_int::<u64>(9, Some('0'))?),
+              _ => {
+                let nanoseconds_fraction = input.parse_int::<u64>(9, Some('-'))?;
+                let digits = nanoseconds_fraction.ilog10();
+                let nanoseconds = if digits == 9 {
+                  nanoseconds_fraction
+                } else {
+                  nanoseconds_fraction * 10u64.pow(9 - digits)
+                };
+                answer.set_nanosecond(nanoseconds);
+              },
             },
             // Time Zone
             'z' => {
@@ -159,10 +169,14 @@ impl<'a> Input<'a> {
   }
 
   /// Pop characters off of the beginning while they satisfy the given condition.
-  fn pop_front_while(&mut self, pred: impl Fn(&char) -> bool) -> String {
+  fn pop_front_while(&mut self, mut pred: impl FnMut(&char) -> bool) -> String {
     let mut s = String::new();
-    while self.peek().map(&pred).unwrap_or_default() {
-      s.push(self.next().unwrap());
+    loop {
+      match self.peek() {
+        Some(ch) if !pred(ch) => break,
+        None => break,
+        _ => s.push(self.next().unwrap()),
+      }
     }
     s
   }
@@ -197,11 +211,21 @@ impl<'a> Input<'a> {
 
   /// Parse an integer, usually with the given number of digits, from the input.
   fn parse_int<I: FromStr<Err = ParseIntError>>(
-    &mut self, digits: usize, padding: Option<char>,
+    &mut self, mut digits: usize, padding: Option<char>,
   ) -> ParseResult<I> {
     let e = self.err(ErrorKind::Unexpected);
     match padding {
-      Some('-') => self.pop_front_while(|c| c.is_numeric()).parse::<I>().map_err(|_| e),
+      Some('-') => self
+        .pop_front_while(|c| {
+          if digits == 0 {
+            false
+          } else {
+            digits -= 1;
+            c.is_numeric()
+          }
+        })
+        .parse::<I>()
+        .map_err(|_| e),
       Some(' ') => self.pop_front(digits).trim_start().parse::<I>().map_err(|_| e),
       Some('0') | None => self.pop_front(digits).parse::<I>().map_err(|_| e),
       _ => unreachable!("Invalid padding"),
