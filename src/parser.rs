@@ -77,7 +77,7 @@ impl<'a> OnceParser<'a> {
               Some(9) => answer.set_nanosecond(input.parse_int::<u64>(9, Some('0'))?),
               _ => {
                 let nanoseconds_fraction = input.parse_int::<u64>(9, Some('-'))?;
-                let digits = nanoseconds_fraction.ilog10();
+                let digits = 1 + nanoseconds_fraction.ilog10();
                 let nanoseconds = if digits == 9 {
                   nanoseconds_fraction
                 } else {
